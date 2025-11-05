@@ -1,0 +1,1 @@
+ID	Label	Elevation (m)	Zone	Flow (Out net) (L/s)	Hydraulic Grade (m)	X (m)	Y (m)710	R-1	277.98	<None>	115.08	277.98	573459.33	3741876.36

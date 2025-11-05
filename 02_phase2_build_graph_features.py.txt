@@ -1,0 +1,34 @@
+"""
+Phase 2 — Graph Construction & Features
+Builds an undirected graph from junctions/pipes and computes degree/betweenness/closeness.
+Saves merged features to output/Phase2/phase2_features.csv.
+"""
+import os, pandas as pd, networkx as nx
+from utils_io import read_csv_any, basic_junction_schema, basic_pipe_schema
+
+ROOT = os.path.abspath(os.path.dirname(__file__))
+IN1  = os.path.join(ROOT, "output", "Phase1", "junctions_clean.csv")
+IN2  = os.path.join(ROOT, "output", "Phase1", "pipes_clean.csv")
+OUT  = os.path.join(ROOT, "output", "Phase2")
+os.makedirs(OUT, exist_ok=True)
+
+j = read_csv_any(IN1); p = read_csv_any(IN2)
+cj_label,_,_,cj_elev,cj_dem,_,cj_press = basic_junction_schema(j)
+cp_label,cp_from,cp_to,_,_,_,_,_,_,_ = basic_pipe_schema(p)
+
+G = nx.Graph()
+for n in j[cj_label].astype(str): G.add_node(n)
+for _,r in p.dropna(subset=[cp_from,cp_to]).iterrows():
+    G.add_edge(str(r[cp_from]), str(r[cp_to]))
+
+deg = nx.degree_centrality(G)
+btw = nx.betweenness_centrality(G, normalized=True)
+cls = nx.closeness_centrality(G)
+
+df = j.copy()
+df["degree_c"]    = df[cj_label].astype(str).map(deg)
+df["betweenness"] = df[cj_label].astype(str).map(btw)
+df["closeness"]   = df[cj_label].astype(str).map(cls)
+
+df.to_csv(os.path.join(OUT,"phase2_features.csv"), index=False)
+print("Phase 2 complete →", os.path.join(OUT,"phase2_features.csv"))

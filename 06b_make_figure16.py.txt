@@ -1,0 +1,46 @@
+"""
+Phase 6b — Make Figure 16 (Pressure Map) from Phase 6 outputs.
+If X/Y coordinates exist, plots spatial pressure map; else plots distribution.
+"""
+import os, pandas as pd, numpy as np, matplotlib.pyplot as plt
+
+ROOT = os.path.abspath(os.path.dirname(__file__))
+CSV  = os.path.join(ROOT, "output", "Phase6", "phase6_best_pressure_map.csv")
+OUT  = os.path.join(ROOT, "output", "Phase6")
+os.makedirs(OUT, exist_ok=True)
+
+if not os.path.isfile(CSV):
+    print("No best_pressure_map available; run Phase 6 variant that saves it.")
+    raise SystemExit
+
+df = pd.read_csv(CSV, encoding="utf-8-sig")
+cols = {c.strip(): c for c in df.columns}
+p_col = [c for c in cols if "p_pred" in c.lower() or "pressure" in c.lower()][0]
+x_candidates = [c for c in cols if c.lower() in ["x (m)","x"]]
+y_candidates = [c for c in cols if c.lower() in ["y (m)","y"]]
+has_xy = x_candidates and y_candidates
+
+plt.rcParams.update({"figure.dpi": 150, "font.size": 11})
+if has_xy:
+    x=cols[x_candidates[0]]; y=cols[y_candidates[0]]
+    fig, ax = plt.subplots(figsize=(7.2,5.4))
+    sc = ax.scatter(df[x], df[y], c=df[p_col], s=20, cmap="viridis", edgecolor="none")
+    plt.colorbar(sc, ax=ax, label="Predicted Pressure (m H2O)")
+    ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
+    ax.set_title("Predicted Nodal Pressure (Pareto-optimal)")
+    ax.grid(True, alpha=0.25)
+    out = os.path.join(OUT, "Figure16_pressure_map.png")
+else:
+    yv = df[p_col].astype(float).values
+    fig, ax = plt.subplots(figsize=(7.2,4.8))
+    ax.hist(yv, bins=20)
+    ax.axvline(20, ls="--", lw=1, color="tab:red", alpha=0.7)
+    ax.axvline(70, ls="--", lw=1, color="tab:red", alpha=0.7)
+    ax.set_xlabel("Predicted Pressure (m H2O)")
+    ax.set_ylabel("Count")
+    ax.set_title("Predicted Nodal Pressure Distribution (Pareto-optimal)")
+    ax.grid(True, alpha=0.25)
+    out = os.path.join(OUT, "Figure16_pressure_distribution.png")
+
+plt.tight_layout(); plt.savefig(out, dpi=300); plt.close()
+print("Saved →", out)

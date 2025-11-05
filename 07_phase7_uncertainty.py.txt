@@ -1,0 +1,96 @@
+"""
+Phase 7 — Uncertainty & Resilience Analysis (Monte Carlo)
+Perturb demand, pump head, and roughness to estimate violation probability and resilience.
+"""
+import os, numpy as np, pandas as pd, matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from utils_io import read_csv_any, basic_junction_schema, basic_pipe_schema, to_num
+
+ROOT = os.path.abspath(os.path.dirname(__file__))
+J = os.path.join(ROOT, "data", "Junction Table.csv")
+P = os.path.join(ROOT, "data", "Pipe Table.csv")
+OUT= os.path.join(ROOT, "output", "Phase7")
+os.makedirs(OUT, exist_ok=True)
+
+j=read_csv_any(J); p=read_csv_any(P)
+cj_label,cj_x,cj_y,cj_elev,cj_dem,cj_hg,cj_press=basic_junction_schema(j)
+cp_label,cp_from,cp_to,cp_len,cp_diam,cp_mat,cp_c,cp_flow,cp_vel,cp_hg=basic_pipe_schema(p)
+
+for c in [cj_x,cj_y,cj_elev,cj_dem,cj_press]:
+    if c: j[c]=j[c].apply(to_num)
+for c in [cp_len,cp_diam,cp_flow,cp_hg]:
+    if c: p[c]=p[c].apply(to_num)
+
+# Simple neighbor features
+deg={}; meanD={}; sumL={}; sumQ={}
+for _,r in p.dropna(subset=[cp_from,cp_to]).iterrows():
+    a,b=str(r[cp_from]).strip(), str(r[cp_to]).strip()
+    for n in (a,b):
+        deg[n]=deg.get(n,0)+1
+        meanD.setdefault(n,[]).append(r.get(cp_diam, np.nan))
+        sumL[n]=sumL.get(n,0)+float(r.get(cp_len,0) or 0)
+        sumQ[n]=sumQ.get(n,0)+float(r.get(cp_flow,0) or 0)
+
+JJ=j[[c for c in [cj_label,cj_elev,cj_dem,cj_press] if c]].copy()
+JJ["deg"]=JJ[cj_label].astype(str).map(deg).fillna(0)
+JJ["dmm"]=JJ[cj_label].astype(str).map(lambda k: np.nanmean(meanD.get(str(k),[np.nan])))
+JJ["sumlen"]=JJ[cj_label].astype(str).map(sumL).fillna(0)
+JJ["sumq"]=JJ[cj_label].astype(str).map(sumQ).fillna(0)
+
+X=JJ[["Elevation (m)","Demand (L/s)","deg","dmm","sumlen","sumq"]].copy()
+y=JJ["Pressure (m H2O)"].copy()
+Xtr,Xte,ytr,yte=train_test_split(X.fillna(X.median()), y, test_size=0.3, random_state=1)
+rf=RandomForestRegressor(n_estimators=300, random_state=1).fit(Xtr,ytr)
+print("RF surrogate R2 =", round(rf.score(Xte,yte),3))
+
+# Monte Carlo
+N=500; Pmin,Pmax=20.0,70.0
+def sample(mu,sigma,lo,hi,n): 
+    s=np.random.normal(mu,sigma,n); return np.clip(s,lo,hi)
+
+q_mult = sample(1.0,0.10,0.7,1.3,N)
+H_pump = sample(60.0,5.0,40.0,80.0,N)
+C_hw   = sample(130.0,10.0,110.0,150.0,N)
+a=2.0
+
+metrics=[]
+for k in range(N):
+    Xs=X.copy(); Xs["Demand (L/s)"]=X["Demand (L/s)"]*q_mult[k]
+    bias=0.25*(H_pump[k]-60.0); pred=rf.predict(Xs.fillna(Xs.median()))+bias
+    hl_scale=(130.0/C_hw[k])**a; pred=pred/hl_scale
+
+    viol_low  = np.maximum(0, Pmin - pred).sum()
+    viol_high = np.maximum(0, pred - Pmax).sum()
+    f1 = viol_low + viol_high
+    R  = 1 - (np.maximum(0, Pmin - pred).sum() / (np.maximum(1e-6, pred.sum())))
+    R  = float(np.clip(R, 0, 1))
+
+    metrics.append({"minP": float(np.min(pred)),
+                    "meanP": float(np.mean(pred)),
+                    "f1_violation": float(f1),
+                    "resilience": R,
+                    "q_mult": q_mult[k],
+                    "H_pump": H_pump[k],
+                    "C_hw": C_hw[k]})
+
+MC = pd.DataFrame(metrics)
+MC.to_csv(os.path.join(OUT,"phase7_mc_summary.csv"), index=False)
+
+plt.figure(figsize=(6.2,4.4)); plt.hist(MC["minP"], bins=30)
+plt.axvline(Pmin, ls="--", color="r", label="20 m")
+plt.xlabel("Minimum nodal pressure (m H2O)"); plt.ylabel("Count")
+plt.title("Monte Carlo — minimum pressure"); plt.legend(); plt.tight_layout()
+plt.savefig(os.path.join(OUT,"phase7_fig_minP_hist.png"), dpi=250); plt.close()
+
+plt.figure(figsize=(6.2,4.4)); plt.hist(MC["resilience"], bins=30)
+plt.xlabel("Resilience index (0–1)"); plt.ylabel("Count")
+plt.title("Monte Carlo — resilience"); plt.tight_layout()
+plt.savefig(os.path.join(OUT,"phase7_fig_resilience_hist.png"), dpi=250); plt.close()
+
+plt.figure(figsize=(6.2,4.4)); plt.scatter(MC["q_mult"], MC["f1_violation"], s=12, alpha=0.6)
+plt.xlabel("Demand multiplier"); plt.ylabel("Pressure-violation metric f1 (m)")
+plt.title("Violation vs demand uncertainty"); plt.tight_layout()
+plt.savefig(os.path.join(OUT,"phase7_fig_violation_vs_q.png"), dpi=250); plt.close()
+
+print("Phase 7 complete →", OUT)

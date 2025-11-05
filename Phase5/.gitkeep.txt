@@ -1,0 +1,2 @@
+# Outputs for Phase 5 — Sensitivity analysis.
+# Contains sensitivity indices, bar plots, and partial dependence charts.

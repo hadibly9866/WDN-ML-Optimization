@@ -1,0 +1,135 @@
+"""
+Phase 6 — Multi-Objective Optimization (NSGA-II) with RF Surrogate
+Minimize (1) pressure violations, (2) energy proxy, and (3) headloss proxy.
+Produces Pareto front and best-solution pressure map.
+"""
+import os, numpy as np, pandas as pd, matplotlib.pyplot as plt
+from utils_io import read_csv_any, to_num, basic_junction_schema, basic_pipe_schema
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score
+from pymoo.core.problem import ElementwiseProblem
+from pymoo.optimize import minimize
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.termination import get_termination
+
+ROOT = os.path.abspath(os.path.dirname(__file__))
+JUNC = os.path.join(ROOT, "data", "Junction Table.csv")
+PIPE = os.path.join(ROOT, "data", "Pipe Table.csv")
+OUT  = os.path.join(ROOT, "output", "Phase6")
+os.makedirs(OUT, exist_ok=True)
+
+PUMP_NODE_NAME = "J-109"
+P_MIN, P_MAX = 20.0, 70.0
+LAMBDA_DECAY = 1200.0
+
+jdf = read_csv_any(JUNC)
+pdf = read_csv_any(PIPE)
+cj_label,cj_x,cj_y,cj_elev,cj_dem,cj_hg,cj_press = basic_junction_schema(jdf)
+cp_label,cp_from,cp_to,cp_len,cp_diam,cp_mat,cp_c,cp_flow,cp_vel,cp_hg = basic_pipe_schema(pdf)
+
+for c in [cj_x,cj_y,cj_elev,cj_dem,cj_press]:
+    if c: jdf[c]=jdf[c].apply(to_num)
+for c in [cp_len,cp_diam,cp_flow,cp_hg]:
+    if c: pdf[c]=pdf[c].apply(to_num)
+
+jdf = jdf.dropna(subset=[cj_elev,cj_dem,cj_press]).copy()
+pdf = pdf.dropna(subset=[cp_from,cp_to,cp_len,cp_diam]).copy()
+jdf[cj_label] = jdf[cj_label].astype(str)
+pdf[cp_from]=pdf[cp_from].astype(str); pdf[cp_to]=pdf[cp_to].astype(str)
+
+nodes = jdf[cj_label].values
+node2idx = {n:i for i,n in enumerate(nodes)}
+N = len(nodes)
+edges=[]
+for u,v,L,Dmm in zip(pdf[cp_from],pdf[cp_to],pdf[cp_len],pdf[cp_diam]):
+    if u in node2idx and v in node2idx:
+        edges.append((node2idx[u],node2idx[v],float(L),float(Dmm)/1000.0))
+
+adj=[[] for _ in range(N)]
+for (u,v,L,D) in edges:
+    adj[u].append((u,v,L,D)); adj[v].append((u,v,L,D))
+
+def agg_feats(scale_diam=1.0):
+    mean_d = np.zeros(N); sum_L = np.zeros(N); deg = np.zeros(N)
+    for i in range(N):
+        if not adj[i]: continue
+        ds = [d*scale_diam for (_,_,_,d) in adj[i]]
+        ls = [l for (_,_,l,_) in adj[i]]
+        mean_d[i]  = np.nanmean(ds) if ds else 0.0
+        sum_L[i]   = np.nansum(ls) if ls else 0.0
+        deg[i]     = len(adj[i])
+    return mean_d,sum_L,deg
+
+# Distance-decay from pump
+if cj_x and cj_y and (PUMP_NODE_NAME in node2idx):
+    px=float(jdf.loc[jdf[cj_label]==PUMP_NODE_NAME, cj_x].values[0])
+    py=float(jdf.loc[jdf[cj_label]==PUMP_NODE_NAME, cj_y].values[0])
+    dist=np.sqrt((jdf[cj_x]-px)**2+(jdf[cj_y]-py)**2).values
+    w_decay=np.exp(-dist/LAMBDA_DECAY)
+else:
+    w_decay=np.ones(N)
+
+# Surrogate RF
+mD0,sL0,deg0 = agg_feats(1.0)
+X0 = pd.DataFrame({
+    "Elevation": jdf[cj_elev].values,
+    "Demand":    jdf[cj_dem].values,
+    "MeanNbrDiam": mD0,
+    "SumConnLen":  sL0,
+    "Deg": deg0
+}).values
+y0 = jdf[cj_press].values
+Xtr,Xte,ytr,yte = train_test_split(X0,y0,test_size=0.3,random_state=42)
+rf = RandomForestRegressor(n_estimators=500,random_state=42,n_jobs=-1).fit(Xtr,ytr)
+print("Surrogate RF R2 =", round(r2_score(yte, rf.predict(Xte)),3))
+
+rho_g = 9810.0
+Q_tot = max(1e-6, np.nansum(jdf[cj_dem].values))/1000.0
+base_hl = float(np.nansum(pdf[cp_hg].values*pdf[cp_len].values)) if cp_hg else 1.0
+
+def energy_proxy(d_scale, pump_head):
+    pump_E = rho_g * pump_head * Q_tot
+    pipe_hl = base_hl * (d_scale ** (-4.871))
+    return pump_E + pipe_hl, pipe_hl
+
+def press_violation(p):
+    under = np.clip(P_MIN - p, 0, None)
+    over  = np.clip(p - P_MAX, 0, None)
+    return float(under.sum()+over.sum())
+
+class WaterMOO(ElementwiseProblem):
+    def __init__(self):
+        xl=np.array([0.7,20.0,0.7]); xu=np.array([1.3,80.0,1.3])
+        super().__init__(n_var=3,n_obj=3,n_constr=0,xl=xl,xu=xu)
+    def _evaluate(self, x, out,*args,**kw):
+        d_scale,pump_head,q_mult = float(x[0]), float(x[1]), float(x[2])
+        mD,sL,deg = agg_feats(d_scale)
+        X = pd.DataFrame({
+            "Elevation": jdf[cj_elev].values,
+            "Demand":    jdf[cj_dem].values*q_mult,
+            "MeanNbrDiam": mD,
+            "SumConnLen":  sL,
+            "Deg": deg
+        }).values
+        p_pred = rf.predict(X) + 0.08 * pump_head * w_decay
+        f1 = press_violation(p_pred)
+        E,hl = energy_proxy(d_scale,pump_head)
+        out["F"] = np.array([f1,E,hl])
+
+algorithm = NSGA2(pop_size=80, eliminate_duplicates=True)
+termination = get_termination("n_gen", 60)
+res = minimize(WaterMOO(), algorithm, termination, seed=42, verbose=True)
+F, X = res.F, res.X
+
+cols = ["d_scale","pump_head(m)","q_mult","f1_violation","f2_energy","f3_headloss"]
+pd.DataFrame(np.hstack([X,F]), columns=cols).to_csv(os.path.join(OUT,"phase6_pareto_solutions.csv"), index=False)
+
+plt.figure(figsize=(6,5))
+sc=plt.scatter(F[:,0],F[:,1],c=F[:,2],s=14); plt.colorbar(sc,label="Headloss proxy")
+plt.xlabel("Pressure Violation (m)"); plt.ylabel("Energy Proxy (rel.)")
+plt.title("Pareto Front — NSGA-II"); plt.tight_layout(); plt.savefig(os.path.join(OUT,"phase6_pareto_front.png"), dpi=250); plt.close()
+
+# (Optional) You can compute best-solution pressure map and save as CSV here if needed.
+
+print("Phase 6 complete →", OUT)

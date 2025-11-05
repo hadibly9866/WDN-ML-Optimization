@@ -1,0 +1,2 @@
+# Outputs for Phase 1 — Data cleaning and quality control.
+# Contains validated CSV files for Junctions, Pipes, Pumps, and Reservoirs.

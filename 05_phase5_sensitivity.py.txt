@@ -1,0 +1,35 @@
+"""
+Phase 5 — Sensitivity Analysis
+Uses RandomForest importances and Partial Dependence to assess drivers of pressure.
+"""
+import os, pandas as pd, matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.inspection import PartialDependenceDisplay
+from sklearn.model_selection import train_test_split
+
+ROOT = os.path.abspath(os.path.dirname(__file__))
+IN   = os.path.join(ROOT, "output", "Phase2", "phase2_features.csv")
+OUT  = os.path.join(ROOT, "output", "Phase5")
+os.makedirs(OUT, exist_ok=True)
+
+df = pd.read_csv(IN, encoding="utf-8-sig")
+y_col = [c for c in df.columns if c.lower().startswith("pressure")][0]
+y = df[y_col]; X = df.drop(columns=[y_col])
+
+Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.25, random_state=7)
+rf = RandomForestRegressor(n_estimators=500, random_state=7); rf.fit(Xtr, ytr)
+imp = pd.Series(rf.feature_importances_, index=X.columns).sort_values(ascending=False)
+imp.to_csv(os.path.join(OUT,"sensitivity_table.csv"))
+
+plt.figure(figsize=(6,4)); imp.head(12).iloc[::-1].plot(kind="barh")
+plt.xlabel("Feature importance"); plt.title("Global Sensitivity (RF)")
+plt.tight_layout(); plt.savefig(os.path.join(OUT,"sensitivity_bar.png"), dpi=250); plt.close()
+
+top2 = imp.index[:2].tolist()
+fig, ax = plt.subplots(1,2, figsize=(9,4))
+PartialDependenceDisplay.from_estimator(rf, X, [top2[0]], ax=ax[0])
+PartialDependenceDisplay.from_estimator(rf, X, [top2[1]], ax=ax[1])
+fig.suptitle("Partial Dependence")
+plt.tight_layout(); plt.savefig(os.path.join(OUT,"pdp_top2.png"), dpi=250); plt.close()
+
+print("Phase 5 complete →", OUT)

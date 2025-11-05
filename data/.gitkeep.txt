@@ -1,0 +1,10 @@
+# This folder stores raw input data for the project.
+# Replace these CSVs with your exported WaterGEMS FlexTables:
+# - Junction Table.csv
+# - Pipe Table.csv
+# - Pump Table.csv
+# - Reservoir Table.csv
+# 
+# Each file should include consistent headers such as:
+#   Label, Elevation (m), Demand (L/s), Hydraulic Grade (m), Pressure (m H2O)
+# for Junctions, and corresponding attributes for Pipes, Pumps, and Reservoirs.

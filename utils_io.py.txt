@@ -1,0 +1,80 @@
+import pandas as pd, numpy as np, os
+
+def _normalize_columns(cols):
+    """Strip and remove odd unicode chars; deduplicate if needed."""
+    clean = [str(c).strip().replace("\ufeff","").replace("\u200f","").replace("\xa0"," ") for c in cols]
+    # handle potential duplicates after normalization
+    seen = {}
+    out = []
+    for c in clean:
+        if c not in seen:
+            seen[c] = 1
+            out.append(c)
+        else:
+            seen[c] += 1
+            out.append(f"{c}.{seen[c]}")  # e.g., "Label", "Label.2"
+    return out
+
+def read_csv_any(path):
+    """
+    Robust CSV/TSV reader:
+    - Tries multiple encodings
+    - Auto-detects delimiter (comma / tab / whitespace) via sep=None, engine='python'
+    - Normalizes column names (trims BOM/RTL/nbsp)
+    """
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"File not found: {path}")
+
+    last = None
+    for enc in ["utf-8-sig","utf-8","cp1252","latin1"]:
+        try:
+            # sep=None + engine='python' => autodetects comma/tab/whitespace
+            df = pd.read_csv(
+                path,
+                encoding=enc,
+                sep=None,
+                engine="python",
+                comment=None,          # change to "#" if you have commented headers
+                keep_default_na=True,  # standard NA handling
+            )
+            df.columns = _normalize_columns(df.columns)
+            return df
+        except Exception as e:
+            last = e
+            continue
+
+    raise RuntimeError(f"Cannot read CSV: {path}. Last error: {last}")
+
+def to_num(x):
+    if isinstance(x, str):
+        # normalize decimal comma to dot; leave thousands-sep to pandas coercion
+        x = x.replace(",", ".")
+    return pd.to_numeric(x, errors="coerce")
+
+def pick(cols, candidates):
+    for c in candidates:
+        if c in cols: return c
+    return None
+
+def basic_junction_schema(df):
+    lab = pick(df.columns, ["Label","ID","Node"])
+    x   = pick(df.columns, ["X (m)","X"])
+    y   = pick(df.columns, ["Y (m)","Y"])
+    elev= pick(df.columns, ["Elevation (m)","Elevation"])
+    dem = pick(df.columns, ["Demand (L/s)","Demand","Base Demand (L/s)"])
+    hgl = pick(df.columns, ["Hydraulic Grade (m)","HGL (m)"])
+    p   = pick(df.columns, ["Pressure (m H2O)","Pressure (m)","Pressure"])
+    return lab,x,y,elev,dem,hgl,p
+
+def basic_pipe_schema(df):
+    lab = pick(df.columns, ["Label","ID"])
+    fr  = pick(df.columns, ["From Node","Start Node","From"])
+    to  = pick(df.columns, ["To Node","End Node","To"])
+    L   = pick(df.columns, ["Length (Scaled) (m)","Length (m)","Length"])
+    D   = pick(df.columns, ["Diameter (mm)","Diameter"])
+    mat = pick(df.columns, ["Material"])
+    C   = pick(df.columns, ["Hazen-Williams C","C"])
+    Q   = pick(df.columns, ["Flow (L/s)","Flow"])
+    V   = pick(df.columns, ["Velocity (m/s)","Velocity"])
+    hg  = pick(df.columns, ["Headloss Gradient (m/m)","Headloss (m/m)"])
+    return lab,fr,to,L,D,mat,C,Q,V,hg

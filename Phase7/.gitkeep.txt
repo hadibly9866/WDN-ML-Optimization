@@ -1,0 +1,2 @@
+# Outputs for Phase 7 — Uncertainty and resilience analysis.
+# Contains Monte Carlo results, resilience index plots, and violation probability data.

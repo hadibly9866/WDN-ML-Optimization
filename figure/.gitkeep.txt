@@ -1,0 +1,10 @@
+# This folder contains all figures used in the publication and README.
+# Recommended naming convention: fig01_network_plan.png ... fig19_uncertainty_plot.png
+#
+# Examples:
+# - fig01_network_plan.png          → Phase 2 (Network structure)
+# - fig16_pareto_front.png          → Phase 6 (Optimization results)
+# - fig18_resilience_hist.png       → Phase 7 (Resilience analysis)
+# - fig19_violation_vs_demand.png   → Phase 7 (Violation probability)
+#
+# Each figure should have a clear caption and be referenced in README or paper text.

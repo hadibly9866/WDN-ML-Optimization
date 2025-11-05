@@ -1,0 +1,2 @@
+# Outputs for Phase 6 — Multi-objective optimization (NSGA-II).
+# Includes Pareto front results, best solutions, and pressure distribution maps.

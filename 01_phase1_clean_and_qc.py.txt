@@ -1,0 +1,43 @@
+"""
+Phase 1 — Data Cleaning & Quality Control
+Reads WaterGEMS FlexTables (demo CSVs), casts numerics, drops NAs, and saves
+cleaned outputs & basic histograms under output/Phase1/.
+"""
+import os, pandas as pd, matplotlib.pyplot as plt
+from utils_io import read_csv_any, to_num, basic_junction_schema, basic_pipe_schema
+
+ROOT = os.path.abspath(os.path.dirname(__file__))
+DATA = os.path.join(ROOT, "data")
+OUT  = os.path.join(ROOT, "output", "Phase1")
+os.makedirs(OUT, exist_ok=True)
+
+j = read_csv_any(os.path.join(DATA, "Junction Table.csv"))
+p = read_csv_any(os.path.join(DATA, "Pipe Table.csv"))
+
+cj_label,cj_x,cj_y,cj_elev,cj_dem,cj_hg,cj_press = basic_junction_schema(j)
+cp_label,cp_from,cp_to,cp_len,cp_diam,cp_mat,cp_c,cp_flow,cp_vel,cp_hg = basic_pipe_schema(p)
+
+for c in [cj_x,cj_y,cj_elev,cj_dem,cj_hg,cj_press]:
+    if c: j[c]=j[c].apply(to_num)
+for c in [cp_len,cp_diam,cp_flow,cp_vel,cp_hg,cp_c]:
+    if c: p[c]=p[c].apply(to_num)
+
+j_clean = j.dropna(subset=[cj_elev,cj_dem,cj_press]).copy()
+p_clean = p.dropna(subset=[cp_from,cp_to,cp_len,cp_diam]).copy()
+
+j_clean.to_csv(os.path.join(OUT,"junctions_clean.csv"), index=False)
+p_clean.to_csv(os.path.join(OUT,"pipes_clean.csv"), index=False)
+
+plt.figure(); j_clean[cj_dem].hist(bins=20)
+plt.xlabel("Demand (L/s)"); plt.ylabel("Count"); plt.title("Junction Demand")
+plt.tight_layout(); plt.savefig(os.path.join(OUT,"hist_demand.png"), dpi=200); plt.close()
+
+plt.figure(); j_clean[cj_press].hist(bins=20)
+plt.xlabel("Pressure (m H2O)"); plt.ylabel("Count"); plt.title("Nodal Pressure")
+plt.tight_layout(); plt.savefig(os.path.join(OUT,"hist_pressure.png"), dpi=200); plt.close()
+
+plt.figure(); p_clean[cp_diam].hist(bins=20)
+plt.xlabel("Diameter (mm)"); plt.ylabel("Count"); plt.title("Pipe Diameter")
+plt.tight_layout(); plt.savefig(os.path.join(OUT,"hist_diameter.png"), dpi=200); plt.close()
+
+print("Phase 1 complete →", OUT)
